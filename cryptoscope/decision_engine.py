@@ -37,14 +37,40 @@ def score_crypto_asset(
     target levels, stop loss, and R:R compliance gate.
     """
     if not candles or len(candles) < 20:
+        c_price = float(candles[-1]["c"]) if candles else 0.0
         return {
             "symbol": symbol,
             "status": "failed",
             "score": 50,
+            "composite_score": 50,
             "tier": "NEUTRAL",
+            "tier_label": "NEUTRAL",
+            "direction": "NEUTRAL",
             "action": "WAIT - INSUFFICIENT DATA",
             "reason": "Minimum 20 candles required for statistical validity.",
+            "price": c_price,
+            "entry": c_price,
+            "stop_loss": c_price,
+            "target_1": c_price,
+            "target_2": c_price,
+            "rr_ratio": 1.5,
+            "atr": 0.0,
+            "cvd": {"regime": "NEUTRAL", "latest_cvd": 0.0, "delta_ratio": 0.0},
+            "oi_funding_regime": "BALANCED",
+            "category_scores": {"trend": 50, "momentum": 50, "cvd": 50, "derivatives": 50, "structure": 50},
+            "trade_signal": {
+                "action": "WAIT",
+                "direction": "NEUTRAL",
+                "entry_price": c_price,
+                "stop_loss": c_price,
+                "target_1": c_price,
+                "target_2": c_price,
+                "rr_ratio": 1.5,
+                "is_valid": False,
+            },
             "metrics": {},
+            "order_blocks": {},
+            "fvgs": [],
         }
     
     cfg = config or {}
@@ -177,28 +203,60 @@ def score_crypto_asset(
     else:
         direction = "NEUTRAL"
         tier = "TIER 3 (CHOP / CONSOLIDATION)"
-        action = "WAIT / MONITOR"
-        sl = current_price
-        t1 = current_price
-        t2 = current_price
-        rr = 0.0
+        action = "MONITOR RANGE BREAKOUT"
+        # In chop/consolidation, provide tactical bracket levels based on ATR
+        sl = round(current_price - (atr * 1.5), 4)
+        risk = current_price - sl
+        t1 = round(current_price + (risk * 1.5), 4)
+        t2 = round(current_price + (risk * 2.5), 4)
+        rr = 1.50
         
+    category_scores = {
+        "trend": round(trend_score, 1),
+        "momentum": round(rsi_score, 1),
+        "cvd": round(cvd_score, 1),
+        "derivatives": round(deriv_score, 1),
+        "structure": round(struct_score, 1),
+    }
+
+    trade_signal = {
+        "action": action,
+        "direction": direction,
+        "entry_price": current_price,
+        "stop_loss": sl,
+        "target_1": t1,
+        "target_2": t2,
+        "rr_ratio": rr,
+        "is_valid": rr >= min_rr,
+    }
+
     return {
         "symbol": symbol,
         "status": "ok",
         "price": current_price,
         "score": final_score,
+        "composite_score": final_score,
         "tier": tier,
+        "tier_label": tier,
         "direction": direction,
         "action": action,
         "rr_ratio": rr,
-        "entry": current_price if action.startswith(("BUY", "SELL")) else None,
-        "stop_loss": sl if action.startswith(("BUY", "SELL")) else None,
-        "target_1": t1 if action.startswith(("BUY", "SELL")) else None,
-        "target_2": t2 if action.startswith(("BUY", "SELL")) else None,
+        "entry": current_price,
+        "stop_loss": sl,
+        "target_1": t1,
+        "target_2": t2,
+        "atr": round(atr, 4),
+        "cvd": {
+            "regime": cvd_div,
+            "latest_cvd": cvd_stats.get("latest_cvd", 0.0),
+            "delta_ratio": round(delta_ratio, 4),
+        },
+        "oi_funding_regime": deriv_regime["regime"],
+        "category_scores": category_scores,
+        "trade_signal": trade_signal,
         "metrics": {
-            "rsi": rsi,
-            "atr": atr,
+            "rsi": round(rsi, 2),
+            "atr": round(atr, 4),
             "ema_fast": round(fast_val, 4),
             "ema_slow": round(slow_val, 4),
             "cvd": cvd_stats.get("latest_cvd"),

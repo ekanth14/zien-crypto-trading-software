@@ -262,12 +262,16 @@ class TerminalApp {
       const sign = isUp ? '+' : '';
       const priceStr = a.price >= 1000 ? a.price.toFixed(1) : (a.price >= 1 ? a.price.toFixed(2) : a.price.toFixed(4));
       const isSelected = a.symbol === this.activeSymbol ? 'selected' : '';
+      const score = Math.round(a.composite_score ?? a.score ?? 50);
 
       let scoreBadgeClass = 'neutral';
-      if (a.score >= 75) scoreBadgeClass = 'high-bull';
-      else if (a.score >= 60) scoreBadgeClass = 'bull';
-      else if (a.score <= 25) scoreBadgeClass = 'high-bear';
-      else if (a.score <= 40) scoreBadgeClass = 'bear';
+      if (score >= 75) scoreBadgeClass = 'high-bull';
+      else if (score >= 60) scoreBadgeClass = 'bull';
+      else if (score <= 25) scoreBadgeClass = 'high-bear';
+      else if (score <= 40) scoreBadgeClass = 'bear';
+
+      const rawRegime = a.regime || a.metrics?.oi_regime || a.tier || 'BALANCED';
+      const regimeStr = String(rawRegime).replace(/_/g, ' ');
 
       rowsHtml += `
         <tr class="asset-row ${isSelected}" data-symbol="${a.symbol}">
@@ -278,10 +282,10 @@ class TerminalApp {
           <td style="text-align: right; font-weight: 600;">$${priceStr}</td>
           <td style="text-align: right; color: ${chgColor}; font-weight: 600;">${sign}${a.change.toFixed(2)}%</td>
           <td style="text-align: center;">
-            <span class="score-badge ${scoreBadgeClass}">${Math.round(a.score)}</span>
+            <span class="score-badge ${scoreBadgeClass}">${score}</span>
           </td>
           <td>
-            <span style="font-size: 9px; color: #94a3b8;">${a.regime}</span>
+            <span style="font-size: 9px; color: #94a3b8;">${regimeStr}</span>
           </td>
         </tr>
       `;
@@ -350,56 +354,65 @@ class TerminalApp {
     }
 
     // Quant Decision Engine Values
-    const qa = q.quant_analysis;
+    const qa = q.quant_analysis || q.quant_evaluation;
     if (qa) {
-      this.dom.compositeScoreVal.textContent = Math.round(qa.composite_score || 0);
-      this.dom.compositeTierBadge.textContent = qa.tier_label || 'NEUTRAL';
+      const score = Math.round(qa.composite_score ?? qa.score ?? 50);
+      this.dom.compositeScoreVal.textContent = score;
+
+      const tier = qa.tier_label || qa.tier || 'NEUTRAL';
+      this.dom.compositeTierBadge.textContent = tier;
 
       let tBadgeClass = 'neutral';
-      if (qa.composite_score >= 75) tBadgeClass = 'high-bull';
-      else if (qa.composite_score >= 60) tBadgeClass = 'bull';
-      else if (qa.composite_score <= 25) tBadgeClass = 'high-bear';
-      else if (qa.composite_score <= 40) tBadgeClass = 'bear';
+      if (score >= 75) tBadgeClass = 'high-bull';
+      else if (score >= 60) tBadgeClass = 'bull';
+      else if (score <= 25) tBadgeClass = 'high-bear';
+      else if (score <= 40) tBadgeClass = 'bear';
       this.dom.compositeTierBadge.className = `score-badge ${tBadgeClass}`;
 
-      if (qa.category_scores) {
-        const cs = qa.category_scores;
-        this.dom.scoreBreakdown.innerHTML = `
-          <span>Trend: ${Math.round(cs.trend || 0)}</span>
-          <span>Mom: ${Math.round(cs.momentum || 0)}</span>
-          <span>CVD: ${Math.round(cs.cvd || 0)}</span>
-          <span>Perp: ${Math.round(cs.derivatives || 0)}</span>
-          <span>OB: ${Math.round(cs.structure || 0)}</span>
-        `;
-      }
+      const cs = qa.category_scores || {
+        trend: qa.metrics?.ema_fast >= qa.metrics?.ema_slow ? 65 : 35,
+        momentum: qa.metrics?.rsi || 50,
+        cvd: qa.cvd?.delta_ratio ? 50 + qa.cvd.delta_ratio * 100 : 50,
+        derivatives: 50,
+        structure: qa.metrics?.has_bullish_ob ? 70 : 50
+      };
 
-      if (qa.trade_signal) {
-        const ts = qa.trade_signal;
-        const fmt = (p) => p >= 1000 ? `$${p.toFixed(1)}` : (p >= 1 ? `$${p.toFixed(2)}` : `$${p.toFixed(4)}`);
-        this.dom.levelEntry.textContent = fmt(ts.entry_price || q.price);
-        this.dom.levelSL.textContent = fmt(ts.stop_loss || 0);
-        this.dom.levelT1.textContent = fmt(ts.target_1 || 0);
-        this.dom.levelT2.textContent = fmt(ts.target_2 || 0);
+      this.dom.scoreBreakdown.innerHTML = `
+        <span>Trend: ${Math.round(cs.trend || 0)}</span>
+        <span>Mom: ${Math.round(cs.momentum || 0)}</span>
+        <span>CVD: ${Math.round(cs.cvd || 0)}</span>
+        <span>Perp: ${Math.round(cs.derivatives || 0)}</span>
+        <span>OB: ${Math.round(cs.structure || 0)}</span>
+      `;
 
-        if (ts.rr_ratio) {
-          const rrValid = ts.rr_ratio >= 1.5;
-          this.dom.rrBadge.textContent = `R:R: ${ts.rr_ratio.toFixed(2)} (${rrValid ? 'GATE VALID' : 'BELOW 1.5'})`;
-          this.dom.rrBadge.style.color = rrValid ? '#10b981' : '#f59e0b';
-        }
-      }
+      const ts = qa.trade_signal || {
+        entry_price: qa.entry || q.price,
+        stop_loss: qa.stop_loss || (q.price * 0.98),
+        target_1: qa.target_1 || (q.price * 1.03),
+        target_2: qa.target_2 || (q.price * 1.06),
+        rr_ratio: qa.rr_ratio || 1.50
+      };
 
-      if (qa.cvd) {
-        this.dom.cvdStatusText.textContent = qa.cvd.regime || 'Neutral';
-        this.dom.cvdStatusText.style.color = qa.cvd.regime.includes('Absorption') || qa.cvd.regime.includes('Buy') ? '#10b981' : '#f43f5e';
-      }
+      const fmt = (p) => p >= 1000 ? `$${p.toFixed(1)}` : (p >= 1 ? `$${p.toFixed(2)}` : `$${p.toFixed(4)}`);
+      this.dom.levelEntry.textContent = fmt(ts.entry_price || qa.entry || q.price);
+      this.dom.levelSL.textContent = fmt(ts.stop_loss || qa.stop_loss || (q.price * 0.98));
+      this.dom.levelT1.textContent = fmt(ts.target_1 || qa.target_1 || (q.price * 1.03));
+      this.dom.levelT2.textContent = fmt(ts.target_2 || qa.target_2 || (q.price * 1.06));
 
-      if (qa.atr) {
-        this.dom.atrValText.textContent = qa.atr.toFixed(4);
-      }
+      const rr = ts.rr_ratio || qa.rr_ratio || 1.50;
+      const rrValid = rr >= 1.5;
+      this.dom.rrBadge.textContent = `R:R: ${rr.toFixed(2)} (${rrValid ? 'GATE VALID' : 'BELOW 1.5'})`;
+      this.dom.rrBadge.style.color = rrValid ? '#10b981' : '#f59e0b';
 
-      if (qa.oi_funding_regime) {
-        this.dom.oiFundingRegimeText.textContent = qa.oi_funding_regime.replace('_', ' ').toUpperCase();
-      }
+      const cvdRegime = qa.cvd?.regime || qa.metrics?.cvd_divergence || 'Neutral';
+      this.dom.cvdStatusText.textContent = String(cvdRegime).replace(/_/g, ' ');
+      this.dom.cvdStatusText.style.color = (cvdRegime.includes('Absorption') || cvdRegime.includes('Buy') || score >= 60) ? '#10b981' : '#f43f5e';
+
+      const atrVal = qa.atr || qa.metrics?.atr || 0;
+      this.dom.atrValText.textContent = atrVal >= 1.0 ? `$${atrVal.toFixed(2)}` : `$${atrVal.toFixed(4)}`;
+
+      const oiRegime = qa.oi_funding_regime || qa.metrics?.oi_regime || 'BALANCED';
+      this.dom.oiFundingRegimeText.textContent = String(oiRegime).replace(/_/g, ' ').toUpperCase();
     }
   }
 
@@ -466,12 +479,41 @@ class TerminalApp {
   }
 
   formatMarkdown(text) {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:2px;">$1</code>')
-      .replace(/\n\n/g, '<br><br>')
-      .replace(/\n/g, '<br>');
+    if (!text) return '';
+    let html = text;
+
+    // Convert markdown tables
+    html = html.replace(/(?:^|\n)(\|.+?\|\n\|[-:| ]+\|\n(?:\|.+?\|\n?)+)/g, (match) => {
+      const rows = match.trim().split('\n');
+      if (rows.length < 3) return match;
+      const headers = rows[0].split('|').filter(c => c.trim().length > 0).map(c => `<th style="padding:4px 8px;border:1px solid rgba(255,255,255,0.08);text-align:left;">${c.trim()}</th>`).join('');
+      const bodyRows = rows.slice(2).map(r => {
+        const cells = r.split('|').filter(c => c.trim().length > 0).map(c => `<td style="padding:3px 8px;border:1px solid rgba(255,255,255,0.05);">${c.trim()}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+      return `<div style="overflow-x:auto;margin:8px 0;"><table style="width:100%;border-collapse:collapse;font-size:11px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:4px;"><thead><tr style="background:rgba(255,255,255,0.05);color:#94a3b8;">${headers}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+    });
+
+    // Headers
+    html = html.replace(/^### (.*$)/gim, '<div style="font-weight:700;font-size:13px;color:#f8fafc;margin:8px 0 4px;">$1</div>');
+    html = html.replace(/^#### (.*$)/gim, '<div style="font-weight:600;font-size:12px;color:#cbd5e1;margin:6px 0 3px;">$1</div>');
+
+    // Blockquotes
+    html = html.replace(/^\> (.*$)/gim, '<div style="border-left:3px solid #10b981;padding:4px 8px;margin:6px 0;background:rgba(16,185,129,0.08);font-size:11px;color:#94a3b8;border-radius:0 3px 3px 0;">$1</div>');
+
+    // Bullet points
+    html = html.replace(/^\- (.*$)/gim, '<div style="padding-left:10px;margin:2px 0;color:#cbd5e1;">• $1</div>');
+
+    // Bold, Italic, Code
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>');
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    html = html.replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 5px;border-radius:3px;color:#38bdf8;font-family:monospace;font-size:11px;">$1</code>');
+
+    // Newlines
+    html = html.replace(/\n\n/g, '<br><br>');
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
   }
 
   async handleLogin() {

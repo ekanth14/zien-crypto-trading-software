@@ -3,6 +3,44 @@
  * Pure Vanilla JavaScript ES Module. Zero external dependencies.
  */
 
+function calculateEmaSeries(values, period) {
+  if (!values || values.length < period) return values.map(() => null);
+  const k = 2 / (period + 1);
+  let ema = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  const res = new Array(period - 1).fill(null);
+  res.push(ema);
+  for (let i = period; i < values.length; i++) {
+    ema = values[i] * k + ema * (1 - k);
+    res.push(ema);
+  }
+  return res;
+}
+
+function calculateRsiSeries(values, period = 14) {
+  if (!values || values.length < period + 1) return values.map(() => 50);
+  const gains = [];
+  const losses = [];
+  for (let i = 1; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    gains.push(diff >= 0 ? diff : 0);
+    losses.push(diff < 0 ? -diff : 0);
+  }
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  
+  const res = new Array(period).fill(50);
+  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  res.push(100 - (100 / (1 + rs)));
+
+  for (let i = period; i < gains.length; i++) {
+    avgGain = (avgGain * (period - 1) + gains[i]) / period;
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    res.push(100 - (100 / (1 + rs)));
+  }
+  return res;
+}
+
 export class CryptoChart {
   constructor(containerId, options = {}) {
     this.container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
@@ -99,7 +137,21 @@ export class CryptoChart {
   }
 
   setData(candles, quantData = null) {
-    this.candles = Array.isArray(candles) ? candles : [];
+    this.candles = Array.isArray(candles) ? candles.map(c => ({
+      t: c.t ?? c.time,
+      time: c.time ?? c.t,
+      o: Number(c.o ?? c.open ?? 0),
+      open: Number(c.open ?? c.o ?? 0),
+      h: Number(c.h ?? c.high ?? 0),
+      high: Number(c.high ?? c.h ?? 0),
+      l: Number(c.l ?? c.low ?? 0),
+      low: Number(c.low ?? c.l ?? 0),
+      c: Number(c.c ?? c.close ?? 0),
+      close: Number(c.close ?? c.c ?? 0),
+      v: Number(c.v ?? c.volume ?? 0),
+      volume: Number(c.volume ?? c.v ?? 0),
+      taker_buy_volume: Number(c.taker_buy_volume ?? c.taker_buy_vol ?? 0),
+    })) : [];
     this.quant = quantData;
     this.render();
   }
@@ -130,10 +182,6 @@ export class CryptoChart {
       return;
     }
 
-    // Proportions:
-    // 0 -> 64% Price Chart
-    // 64% -> 82% CVD & Volume Chart
-    // 82% -> 100% RSI Chart
     const priceTop = 10;
     const priceHeight = Math.max(100, this.height * 0.62 - priceTop);
     const cvdTop = priceTop + priceHeight + 16;
@@ -163,11 +211,24 @@ export class CryptoChart {
       if (c.high > maxP) maxP = c.high;
     }
 
+    // Parse Order Blocks safely (handle dict or list)
+    const obList = [];
     if (this.quant && this.quant.order_blocks) {
-      for (const ob of this.quant.order_blocks) {
-        if (ob.low && ob.low < minP) minP = ob.low;
-        if (ob.high && ob.high > maxP) maxP = ob.high;
+      if (Array.isArray(this.quant.order_blocks)) {
+        obList.push(...this.quant.order_blocks);
+      } else if (typeof this.quant.order_blocks === 'object') {
+        if (this.quant.order_blocks.bullish_ob) {
+          obList.push({ ...this.quant.order_blocks.bullish_ob, kind: 'bullish' });
+        }
+        if (this.quant.order_blocks.bearish_ob) {
+          obList.push({ ...this.quant.order_blocks.bearish_ob, kind: 'bearish' });
+        }
       }
+    }
+
+    for (const ob of obList) {
+      if (ob.low && ob.low < minP) minP = ob.low;
+      if (ob.high && ob.high > maxP) maxP = ob.high;
     }
 
     const range = (maxP - minP) || 1;
@@ -202,58 +263,55 @@ export class CryptoChart {
     }
 
     // Render ICT Order Blocks (Zones)
-    if (this.quant && this.quant.order_blocks) {
-      for (const ob of this.quant.order_blocks) {
-        const isBull = ob.kind === 'bullish';
-        const obTopY = toY(ob.high);
-        const obBottomY = toY(ob.low);
-        const obH = Math.max(3, obBottomY - obTopY);
+    for (const ob of obList) {
+      const isBull = ob.kind === 'bullish';
+      const obTopY = toY(ob.high);
+      const obBottomY = toY(ob.low);
+      const obH = Math.max(3, obBottomY - obTopY);
 
-        ctx.fillStyle = isBull ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.12)';
-        ctx.fillRect(0, obTopY, width, obH);
+      ctx.fillStyle = isBull ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.12)';
+      ctx.fillRect(0, obTopY, width, obH);
 
-        ctx.strokeStyle = isBull ? 'rgba(16, 185, 129, 0.5)' : 'rgba(244, 63, 94, 0.5)';
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(0, obTopY, width, obH);
+      ctx.strokeStyle = isBull ? 'rgba(16, 185, 129, 0.5)' : 'rgba(244, 63, 94, 0.5)';
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(0, obTopY, width, obH);
 
-        // Midline (Equilibrium 50%)
-        const midY = (obTopY + obBottomY) / 2;
-        ctx.beginPath();
-        ctx.moveTo(0, midY);
-        ctx.lineTo(width, midY);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      // Midline (Equilibrium 50%)
+      const midY = (obTopY + obBottomY) / 2;
+      ctx.beginPath();
+      ctx.moveTo(0, midY);
+      ctx.lineTo(width, midY);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-        ctx.fillStyle = isBull ? '#34d399' : '#fb7185';
-        ctx.font = '9px ui-monospace, monospace';
-        const lowStr = ob.low >= 1000 ? ob.low.toFixed(1) : ob.low.toFixed(3);
-        const highStr = ob.high >= 1000 ? ob.high.toFixed(1) : ob.high.toFixed(3);
-        ctx.fillText(`${isBull ? '▲ BULLISH' : '▼ BEARISH'} OB [$${lowStr} - $${highStr}]`, 8, obTopY + 11);
-      }
+      ctx.fillStyle = isBull ? '#34d399' : '#fb7185';
+      ctx.font = '9px ui-monospace, monospace';
+      const lowStr = ob.low >= 1000 ? ob.low.toFixed(1) : ob.low.toFixed(3);
+      const highStr = ob.high >= 1000 ? ob.high.toFixed(1) : ob.high.toFixed(3);
+      ctx.fillText(`${isBull ? '▲ BULLISH' : '▼ BEARISH'} OB [$${lowStr} - $${highStr}]`, 8, obTopY + 11);
     }
 
     // Render Fair Value Gaps (FVG)
-    if (this.quant && this.quant.fvg) {
-      for (const fvg of this.quant.fvg) {
-        const isBull = fvg.kind === 'bullish';
-        const fvgTopY = toY(fvg.top);
-        const fvgBotY = toY(fvg.bottom);
-        const fvgH = Math.max(2, fvgBotY - fvgTopY);
+    const fvgList = this.quant?.fvgs || this.quant?.fvg || [];
+    for (const fvg of fvgList) {
+      const isBull = fvg.type === 'BULLISH_FVG' || fvg.kind === 'bullish';
+      const fvgTopY = toY(fvg.top);
+      const fvgBotY = toY(fvg.bottom);
+      const fvgH = Math.max(2, fvgBotY - fvgTopY);
 
-        ctx.fillStyle = isBull ? 'rgba(6, 182, 212, 0.12)' : 'rgba(245, 158, 11, 0.12)';
-        ctx.fillRect(0, fvgTopY, width, fvgH);
+      ctx.fillStyle = isBull ? 'rgba(6, 182, 212, 0.12)' : 'rgba(245, 158, 11, 0.12)';
+      ctx.fillRect(0, fvgTopY, width, fvgH);
 
-        ctx.strokeStyle = isBull ? 'rgba(6, 182, 212, 0.45)' : 'rgba(245, 158, 11, 0.45)';
-        ctx.setLineDash([2, 2]);
-        ctx.strokeRect(0, fvgTopY, width, fvgH);
-        ctx.setLineDash([]);
+      ctx.strokeStyle = isBull ? 'rgba(6, 182, 212, 0.45)' : 'rgba(245, 158, 11, 0.45)';
+      ctx.setLineDash([2, 2]);
+      ctx.strokeRect(0, fvgTopY, width, fvgH);
+      ctx.setLineDash([]);
 
-        ctx.fillStyle = isBull ? '#22d3ee' : '#fbbf24';
-        ctx.font = '8px ui-monospace, monospace';
-        const botStr = fvg.bottom >= 1000 ? fvg.bottom.toFixed(1) : fvg.bottom.toFixed(3);
-        const topStr = fvg.top >= 1000 ? fvg.top.toFixed(1) : fvg.top.toFixed(3);
-        ctx.fillText(`FVG [${botStr} - ${topStr}]`, width - 130, fvgTopY + 10);
-      }
+      ctx.fillStyle = isBull ? '#22d3ee' : '#fbbf24';
+      ctx.font = '8px ui-monospace, monospace';
+      const botStr = fvg.bottom >= 1000 ? fvg.bottom.toFixed(1) : fvg.bottom.toFixed(3);
+      const topStr = fvg.top >= 1000 ? fvg.top.toFixed(1) : fvg.top.toFixed(3);
+      ctx.fillText(`FVG [${botStr} - ${topStr}]`, width - 130, fvgTopY + 10);
     }
 
     // Render Candlesticks
@@ -282,30 +340,39 @@ export class CryptoChart {
       ctx.fillRect(xLeft, bTop, barWidth, bH);
     }
 
-    // Render EMAs
-    if (this.quant && this.quant.emas) {
-      const emas = this.quant.emas;
-      for (const [key, color] of Object.entries(this.options.emaColors)) {
-        const series = emas[key];
-        if (!series || !series.length) continue;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        let started = false;
-        for (let i = 0; i < n; i++) {
-          const val = series[i];
-          if (val === null || val === undefined || isNaN(val)) continue;
-          const x = i * slot + slot / 2;
-          const y = toY(val);
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else {
-            ctx.lineTo(x, y);
-          }
+    // Render EMAs (9, 21, 50, 200)
+    const closes = candles.map(c => c.close);
+    const ema9 = calculateEmaSeries(closes, 9);
+    const ema21 = calculateEmaSeries(closes, 21);
+    const ema50 = calculateEmaSeries(closes, 50);
+    const ema200 = calculateEmaSeries(closes, 200);
+
+    const emaMap = {
+      ema9: { series: ema9, color: this.options.emaColors.ema9 },
+      ema21: { series: ema21, color: this.options.emaColors.ema21 },
+      ema50: { series: ema50, color: this.options.emaColors.ema50 },
+      ema200: { series: ema200, color: this.options.emaColors.ema200 }
+    };
+
+    for (const { series, color } of Object.values(emaMap)) {
+      if (!series || !series.length) continue;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < n; i++) {
+        const val = series[i];
+        if (val === null || val === undefined || isNaN(val)) continue;
+        const x = i * slot + slot / 2;
+        const y = toY(val);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
         }
-        ctx.stroke();
       }
+      ctx.stroke();
     }
   }
 
@@ -338,17 +405,13 @@ export class CryptoChart {
     }
 
     let cvdSeries = [];
-    if (this.quant && this.quant.cvd && Array.isArray(this.quant.cvd.series)) {
-      cvdSeries = this.quant.cvd.series;
-    } else {
-      let running = 0;
-      for (const c of candles) {
-        const delta = (c.taker_buy_volume !== undefined)
-          ? (2 * c.taker_buy_volume - c.volume)
-          : (c.close >= c.open ? c.volume * 0.35 : -c.volume * 0.35);
-        running += delta;
-        cvdSeries.push(running);
-      }
+    let running = 0;
+    for (const c of candles) {
+      const delta = (c.taker_buy_volume > 0)
+        ? (2 * c.taker_buy_volume - c.volume)
+        : (c.close >= c.open ? c.volume * 0.35 : -c.volume * 0.35);
+      running += delta;
+      cvdSeries.push(running);
     }
 
     if (cvdSeries.length) {
@@ -375,17 +438,15 @@ export class CryptoChart {
       const formattedCvd = Math.round(lastCvd).toLocaleString();
       ctx.fillText(`CVD: ${lastCvd > 0 ? '+' : ''}${formattedCvd}`, width + 8, top + height / 2);
 
-      if (this.quant && this.quant.cvd && this.quant.cvd.divergence) {
-        const div = this.quant.cvd.divergence;
-        if (div.type === 'bullish_absorption') {
-          ctx.fillStyle = '#10b981';
-          ctx.font = 'bold 9px ui-monospace, monospace';
-          ctx.fillText('▲ BULLISH ABSORPTION', width - 150, top + 12);
-        } else if (div.type === 'bearish_exhaustion') {
-          ctx.fillStyle = '#f43f5e';
-          ctx.font = 'bold 9px ui-monospace, monospace';
-          ctx.fillText('▼ BEARISH EXHAUSTION', width - 150, top + 12);
-        }
+      const div = this.quant?.metrics?.cvd_divergence || this.quant?.cvd?.divergence?.type || '';
+      if (div === 'BULLISH_ABSORPTION' || div === 'bullish_absorption') {
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 9px ui-monospace, monospace';
+        ctx.fillText('▲ BULLISH ABSORPTION', width - 150, top + 12);
+      } else if (div === 'BEARISH_EXHAUSTION' || div === 'bearish_exhaustion') {
+        ctx.fillStyle = '#f43f5e';
+        ctx.font = 'bold 9px ui-monospace, monospace';
+        ctx.fillText('▼ BEARISH EXHAUSTION', width - 150, top + 12);
       }
     }
   }
@@ -419,12 +480,8 @@ export class CryptoChart {
     });
     ctx.setLineDash([]);
 
-    let rsiSeries = [];
-    if (this.quant && this.quant.rsi_series) {
-      rsiSeries = this.quant.rsi_series;
-    } else {
-      rsiSeries = this.candles.map(() => 50.0);
-    }
+    const closes = candles.map(c => c.close);
+    const rsiSeries = calculateRsiSeries(closes, 14);
 
     if (rsiSeries.length) {
       ctx.strokeStyle = this.options.rsiColor;
@@ -462,13 +519,13 @@ export class CryptoChart {
       if (last) {
         const isUp = last.close >= last.open;
         const col = isUp ? '#10b981' : '#f43f5e';
-        const chg = (((last.close - last.open) / last.open) * 100).toFixed(2);
+        const chg = (((last.close - last.open) / (last.open || 1)) * 100).toFixed(2);
         this.hud.innerHTML = `
           <div style="display: flex; gap: 14px; flex-wrap: wrap;">
-            <span>O: <b style="color:#f8fafc">${last.open}</b></span>
-            <span>H: <b style="color:#f8fafc">${last.high}</b></span>
-            <span>L: <b style="color:#f8fafc">${last.low}</b></span>
-            <span>C: <b style="color:${col}">${last.close}</b> (${chg > 0 ? '+' : ''}${chg}%)</span>
+            <span>O: <b style="color:#f8fafc">${last.open.toFixed(2)}</b></span>
+            <span>H: <b style="color:#f8fafc">${last.high.toFixed(2)}</b></span>
+            <span>L: <b style="color:#f8fafc">${last.low.toFixed(2)}</b></span>
+            <span>C: <b style="color:${col}">${last.close.toFixed(2)}</b> (${chg > 0 ? '+' : ''}${chg}%)</span>
             <span>Vol: <b style="color:#f8fafc">${Math.round(last.volume).toLocaleString()}</b></span>
             <span style="color:#06b6d4">EMA9</span>
             <span style="color:#f59e0b">EMA21</span>
@@ -514,16 +571,16 @@ export class CryptoChart {
 
     const isUp = c.close >= c.open;
     const col = isUp ? '#10b981' : '#f43f5e';
-    const chg = (((c.close - c.open) / c.open) * 100).toFixed(2);
+    const chg = (((c.close - c.open) / (c.open || 1)) * 100).toFixed(2);
     const dateStr = c.time ? new Date(c.time * 1000).toLocaleTimeString() : '';
 
     this.hud.innerHTML = `
       <div style="display: flex; gap: 14px; flex-wrap: wrap;">
         <span style="color:#38bdf8">[${dateStr}]</span>
-        <span>O: <b style="color:#f8fafc">${c.open}</b></span>
-        <span>H: <b style="color:#f8fafc">${c.high}</b></span>
-        <span>L: <b style="color:#f8fafc">${c.low}</b></span>
-        <span>C: <b style="color:${col}">${c.close}</b> (${chg > 0 ? '+' : ''}${chg}%)</span>
+        <span>O: <b style="color:#f8fafc">${c.open.toFixed(2)}</b></span>
+        <span>H: <b style="color:#f8fafc">${c.high.toFixed(2)}</b></span>
+        <span>L: <b style="color:#f8fafc">${c.low.toFixed(2)}</b></span>
+        <span>C: <b style="color:${col}">${c.close.toFixed(2)}</b> (${chg > 0 ? '+' : ''}${chg}%)</span>
         <span>Vol: <b style="color:#f8fafc">${Math.round(c.volume).toLocaleString()}</b></span>
         ${c.taker_buy_volume ? `<span>Taker Delta: <b style="color:${(2*c.taker_buy_volume - c.volume) >= 0 ? '#10b981' : '#f43f5e'}">${Math.round(2*c.taker_buy_volume - c.volume).toLocaleString()}</b></span>` : ''}
       </div>
