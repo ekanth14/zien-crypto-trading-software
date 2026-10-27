@@ -1,0 +1,20 @@
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Runtime SQLite Databases & Sensitive Backups
+work/runtime/*.db
+work/runtime/*.db-wal
+work/runtime/*.db-shm
+work/backups/*
+
+# Local Environment Secrets
+.env
+*.local
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini
