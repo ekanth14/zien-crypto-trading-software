@@ -37,6 +37,8 @@ Real-time streamgraph tracking liquidity rotation across **Bitcoin (Store of Val
 ### 3. System Architecture & Data Pipeline
 Pure Python 3.12+ standard library backend architecture communicating with Binance public endpoints and local Ollama without requiring any third-party framework or Node.js runtime.
 
+> 📖 **Full Specification:** For complete mathematical proofs, component architecture, data pipeline specs, and API contracts, see [docs/TECHNICAL_ARCHITECTURE.md](docs/TECHNICAL_ARCHITECTURE.md).
+
 <p align="center">
   <img src="docs/assets/architecture_diagram.svg" width="100%" alt="Zien Crypto Architecture Diagram" />
 </p>
